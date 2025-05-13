@@ -1,7 +1,0 @@
-{
-    "discord_tokens": [
-        "<your-discord-tokens>"
-    ],
-    "spam_message": "<your-text>",
-    "image_path": "<path-or-nothing>"
-}
