@@ -169,10 +169,7 @@ def main():
 
     SPAM_MESSAGE = settings["spam_message"]
     IMAGE_PATH = settings.get("image_path")
-    try:
-        with open(IMAGE_PATH, "rb") as _: 
-            pass
-    except FileNotFoundError:
+    if not os.path.isfile(IMAGE_PATH):
         IMAGE_PATH = None
         
     discord_tokens = settings["discord_tokens"]
