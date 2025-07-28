@@ -3,6 +3,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.box import ROUNDED
+from logging import Logger
 
 __all__ = (
     "print_channels_info", 
@@ -16,7 +17,7 @@ __all__ = (
 console = Console()
 
 
-def print_channels_info(guild: str, channels: list[dict]) -> None:
+def print_channels_info(guild: str, channels: list[dict], logger: Logger) -> None:
     """Улучшает вывод информации"""
     
     # Таблица каналов сервера
@@ -39,18 +40,6 @@ def print_channels_info(guild: str, channels: list[dict]) -> None:
     # Отображает табличку
     console.print(table)
     console.print()
-
-
-def _get_noun(number: int, one: str, two: str, five: str) -> str:
-    number %= 100
-    if number >= 5 and number <= 20:
-        return five
-    number %= 10
-    if number == 1:
-        return one
-    if number >= 2 and number <= 4:
-        return two
-    return five
 
 
 def print_settings(settings: dict) -> None:
@@ -175,3 +164,15 @@ def print_error(text: str) -> None:
         )
     )
     console.print()
+
+
+def _get_noun(number: int, one: str, two: str, five: str) -> str:
+    number %= 100
+    if number >= 5 and number <= 20:
+        return five
+    number %= 10
+    if number == 1:
+        return one
+    if number >= 2 and number <= 4:
+        return two
+    return five

@@ -2,7 +2,9 @@ import aiohttp
 import asyncio
 import time
 import json
+import os
 import re
+import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from utils import (
@@ -18,94 +20,126 @@ from utils import (
 SPAM_MESSAGE = "Заглушка"
 IMAGE_PATH = None
 IS_TURBO = None
+MAX_THREADS = 5
 pattern = re.compile(r".*-[0-9]+$")
 
 
-async def send_message(
+class TokenService:
+    def __init__(self, token: str):
+        self.token = token
+        self.headers = {"Authorization": self.token}
+        self._logger = None
+        # self.__prepare_logging()
+    
+    #TODO: logs
+    # def __prepare_logging(self):
+    #     """Настройка вывода логов"""
+
+    #     log_filename = f"logs/{self.token}.log"
+    #     os.makedirs(os.path.dirname(log_filename), exist_ok=True)
+    #     file_handler = logging.FileHandler(log_filename, mode="a")
+    #     self._logger = logging.getLogger(str(self.__class__))
+    #     self._logger.addHandler(file_handler)
+        
+    async def send_message(
+        self,
         session: aiohttp.ClientSession, 
         channel_id: int, 
-        headers: dict,
     ) -> bool:
-    """Отслыает собщение в канал"""
-    
-    try:
-        data = aiohttp.FormData()
-        data.add_field("content", SPAM_MESSAGE)
+        """Отслыает собщение в канал"""
         
-        if IMAGE_PATH:
-            data.add_field(
-                "file",
-                open(IMAGE_PATH, "rb"),
-                filename="image.png",
-                content_type="image/png"
+        try:
+            data = aiohttp.FormData()
+            data.add_field("content", SPAM_MESSAGE)
+            
+            if IMAGE_PATH:
+                data.add_field(
+                    "file",
+                    open(IMAGE_PATH, "rb"),
+                    filename="image.png",
+                    content_type="image/png"
+                )
+    
+            r = await session.post(
+                f"https://discord.com/api/v9/channels/{channel_id}/messages",
+                headers=self.headers,
+                data=data
             )
-   
-        r = await session.post(
-            f"https://discord.com/api/v9/channels/{channel_id}/messages",
-            headers=headers,
-            data=data
-        )
-        if str(r.status).startswith("2"):
-            return True
-        return False
-    except Exception as e:
-        print(f"Ошибка при отправке сообщения: {e}")
-        return False
+            if str(r.status).startswith("2"):
+                return True
+            return False
+        except Exception as e:
+            print(f"Ошибка при отправке сообщения: {e}")
+            return False
 
 
-async def spam_by_token(token: str) -> tuple[int, int]:
-    """Основная работа с юзером"""
+    async def spam_by_token(self) -> tuple[int, int]:
+        """Основная работа с юзером"""
 
-    headers = {"Authorization": token}
-    sended_messages = 0
-    failed_messages = 0
+        sended_messages = 0
+        failed_messages = 0
 
-    # Достаем все сервера юзера
-    async with aiohttp.ClientSession() as session:
-        guilds_response = await session.get("https://discord.com/api/v9/users/@me/guilds", headers=headers)
+        # Достаем все сервера юзера
+        async with aiohttp.ClientSession() as session:
+            guilds_response = await session.get("https://discord.com/api/v9/users/@me/guilds", headers=self.headers)
 
-    guilds = await guilds_response.json()
+        # Проверка валидности токена
+        if not guilds_response.ok:
+            raise Exception("Token '%s' is invalid!" % self.token)
 
-    # Проходимся по каналам серверов
-    async with aiohttp.ClientSession() as session:
-        for guild in guilds:
-            channels_response = await session.get(
-                f"https://discord.com/api/v9/guilds/{guild['id']}/channels",
-                headers=headers
-            )
-            if channels_response.status == 200:
-                channels = await channels_response.json()
-                channels = [
-                    channel for channel in channels
-                    if not pattern.match(channel["name"])
-                ]
+        guilds = await guilds_response.json()
 
-                # Красивый вывод панели каналов и сервера
-                print_channels_info(guild["name"], channels)
+        # Проходимся по каналам серверов
+        async with aiohttp.ClientSession() as session:
+            for guild in guilds:
+                channels_response = await session.get(
+                    f"https://discord.com/api/v9/guilds/{guild['id']}/channels",
+                    headers=self.headers
+                )
+                if channels_response.status == 200:
+                    channels = await channels_response.json()
+                    channels = [
+                        channel for channel in channels
+                        if not pattern.match(channel["name"])
+                    ]
 
-                # В турбо режиме все происходит намного быстрее, но есть шанс блока (он потом проходит)
-                if IS_TURBO:
-                    tasks = [asyncio.create_task(send_message(session, channel['id'], headers)) for channel in channels]
-                    results = await asyncio.gather(*tasks)
-                    sended_messages += sum(1 for success in results if success)
-                    failed_messages += len(results) - sended_messages
+                    # Красивый вывод панели каналов и сервера
+                    print_channels_info(guild["name"], channels, self._logger)
+
+                    # В турбо режиме все происходит намного быстрее, но есть шанс блока (он потом проходит)
+                    if IS_TURBO:
+                        tasks = [asyncio.create_task(self.send_message(session, channel['id'])) for channel in channels]
+                        results = await asyncio.gather(*tasks)
+                        sended_messages += sum(1 for success in results if success)
+                        failed_messages += len(results) - sended_messages
+                    else:
+                        for channel in channels:
+                            result = await self.send_message(session, channel['id'])
+                            if result:
+                                sended_messages += 1
+                            else:
+                                failed_messages += 1
+
                 else:
-                    for channel in channels:
-                        result = await send_message(session, channel['id'], headers)
-                        if result:
-                            sended_messages += 1
-                        else:
-                            failed_messages += 1
-
-            else:
-                print("Не смог взять каналы:", await channels_response.text())
-                print("Серверы:", [guild['name'] for guild in guilds])
-    return sended_messages, failed_messages
+                    print("Не смог взять каналы:", await channels_response.text())
+                    print("Серверы:", [guild['name'] for guild in guilds])
+        return sended_messages, failed_messages
 
 
-def run(token: str) -> None:
-    sended_messages, failed_messages = asyncio.run(spam_by_token(token))
-    print_token_stats(token, sended_messages, failed_messages)
+    async def run(self) -> None:
+        try:
+            sended_messages, failed_messages = await self.spam_by_token()
+            print_token_stats(self.token, sended_messages, failed_messages)
+        except Exception as e:
+            print_error("Возникла ошибка: %s" % e)
+
+
+def launch_token(token: str) -> None:
+    try:
+        token_service = TokenService(token=token)
+        asyncio.run(token_service.run())
+    except Exception as e:
+        print_error("Возникла ошибка: %s" % e)
 
 
 def main():
@@ -114,14 +148,20 @@ def main():
     settings = None
     while settings is None:
         try:
-            settings_path = prompt("Укажите путь к файлу настроек:")
-            with open(settings_path, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
+            # Пытаемся достать настройки из дефолтной папки
+            try:
+                with open('./settings.json', 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+            except FileNotFoundError:
+                # Если не находим, то просим указать путь
+                settings_path = prompt("Укажите путь к файлу настроек:")
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
         except FileNotFoundError:
             print_error("Файл не был найден, укажите существующий файл с разширением .json")
 
     
-    IS_TURBO = prompt("Подключаем турбо? (y/N):") in ('y', '1', 'yes')
+    IS_TURBO = prompt("Подключаем турбо (риск быстрого бана)? (y/N):") in ('y', '1', 'yes')
     settings["is_turbo"] = IS_TURBO
     print_settings(settings)
     
@@ -129,14 +169,20 @@ def main():
 
     SPAM_MESSAGE = settings["spam_message"]
     IMAGE_PATH = settings.get("image_path")
+    try:
+        with open(IMAGE_PATH, "rb") as _: 
+            pass
+    except FileNotFoundError:
+        IMAGE_PATH = None
+        
     discord_tokens = settings["discord_tokens"]
 
     for token in discord_tokens:
-        run(token=token)
+        launch_token(token=token)
     
-    # TODO: 1 token per thread (possible ouput problem)
-    # with ThreadPoolExecutor(max_workers=len(discord_tokens)) as worker: #TODO: max limit
-    #     worker.map(run, discord_tokens)
+    # # TODO: Конкурентная обработка токенов (максимум 5 токенов за раз)
+    # with ThreadPoolExecutor(max_workers=min(len(discord_tokens), MAX_THREADS)) as worker:
+    #     worker.map(launch_token, discord_tokens)
 
     print_processing_time(time.time() - start_time)
 
